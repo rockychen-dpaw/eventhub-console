@@ -1,0 +1,12 @@
+{% extends 'admin/change_list.html' %}
+
+{% block object-tools-items %}
+    {% if event_dispatch_enabled %}
+    <li><a href="{% url 'admin:console_event_enable_dispatch_event' %}" >Reenable Event Dispatch </a></li>
+    <li><a href="{% url 'admin:console_event_disable_dispatch_event' %}" >Disable Event Dispatch </a></li>
+    {% else %}
+    <li><a href="{% url 'admin:console_event_enable_dispatch_event' %}" >Enable Event Dispatch </a></li>
+    {% endif  %}
+    {{ block.super }}
+{% endblock %}
+
