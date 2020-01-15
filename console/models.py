@@ -10,6 +10,24 @@ import reversion
 
 from utils import cachedclassproperty,classproperty
 
+PROGRAMMATIC = 1
+MANAGED = 2
+SYSTEM = 999
+TESTING = -1
+UNITESTING = -2
+    
+CATEGORY_CHOICES = (
+    (PROGRAMMATIC,"Programmatic"),
+    (MANAGED,"Managed"),
+    (SYSTEM,"System"),
+    (TESTING,"Testing"),
+    (UNITESTING,"Unitesting")
+)
+
+EDITABLE_CATEGORY_CHOICES = (
+    (MANAGED,"Managed"),
+    (TESTING,"Testing")
+)
 
 class ModelEventMixin(object):
     @cachedclassproperty
@@ -121,6 +139,7 @@ class ModelEvent(object):
 
 class Publisher(models.Model):
     name = models.CharField(max_length=32,null=False,primary_key=True)
+    category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
     active = models.BooleanField(editable=False,default=True)
     comments = models.TextField(null=True)
     register_time = models.DateTimeField(auto_now_add=timezone.now)
@@ -129,20 +148,28 @@ class Publisher(models.Model):
     def is_system_publisher(self):
         return self.name == 'EventHubConsole'
 
+    @property
+    def is_editable(self):
+        return self.category in (MANAGED,TESTING)
+
     def __str__(self):
         return self.name
 
     class Meta(object):
         db_table = "publisher"
 
-Publisher.EVENTHUB_CONSOLE = Publisher.objects.get_or_create(name="EventHubConsole",defaults={
-    'comments':"Used by event hub console to manage publishers and subscribers"
-})[0]
+try:
+    Publisher.EVENTHUB_CONSOLE = Publisher.objects.get_or_create(name="EventHubConsole",defaults={
+        'comments':"Used by event hub console to manage publishers and subscribers",
+        'category':SYSTEM
+    })[0]
+except:
+    pass
 
 class EventType(models.Model):
     name = models.CharField(max_length=32,null=False,primary_key=True)
     publisher = models.ForeignKey(Publisher,null=False,related_name="event_types",on_delete=models.PROTECT)
-    managed = models.BooleanField(default=True)
+    category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
     active = models.BooleanField(default=True)
     comments = models.TextField(null=True,blank=True)
     sample = JSONField(null=True,blank=True)
@@ -152,6 +179,10 @@ class EventType(models.Model):
     @property
     def is_system_event_type(self):
         return self.publisher.is_system_publisher
+
+    @property
+    def is_editable(self):
+        return self.category in (MANAGED,TESTING)
 
     def __str__(self):
         return "{}.{}".format(self.publisher,self.name)

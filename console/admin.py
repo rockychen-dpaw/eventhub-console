@@ -9,9 +9,24 @@ from .forms import (PublisherEditForm,EventTypeEditForm,SubscriberEditForm,Subsc
 class EventTypeInline(TabularInline):
     model = EventType
     form = EventTypeEditForm
-    readonly_fields=("managed","register_time")
+    readonly_fields=("register_time",)
     can_delete = False
     extra = 1
+
+    def has_change_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_add_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 @register(Publisher)
 class PublisherAdmin(ModelAdmin):
@@ -24,9 +39,9 @@ class PublisherAdmin(ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         if obj:
-            if obj.is_system_publisher:
-                return False
-        return True
+            if obj.is_editable:
+                return True
+        return False
 
     def has_delete_permission(self, request, obj=None):
         return False
