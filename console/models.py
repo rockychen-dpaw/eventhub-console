@@ -1,14 +1,18 @@
+import traceback
+
 from django.db import models,connection
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save,pre_save
 from django.dispatch import receiver
-
-
+from django.contrib.auth.models import User
 from django.contrib.postgres.fields import JSONField
 from django.utils import timezone
+
+from smart_selects.db_fields import ChainedForeignKey
 
 import reversion
 
 from utils import cachedclassproperty,classproperty
+from project import loginuser
 
 PROGRAMMATIC = 1
 MANAGED = 2
@@ -24,10 +28,24 @@ CATEGORY_CHOICES = (
     (UNITESTING,"Unitesting")
 )
 
+CATEGORIES = dict(CATEGORY_CHOICES)
+
 EDITABLE_CATEGORY_CHOICES = (
     (MANAGED,"Managed"),
     (TESTING,"Testing")
 )
+
+try:
+    User.PROGRAMMATIC,created = User.objects.get_or_create(username="Programattic",defaults={
+        'password':'',
+        'is_superuser':False,
+        'is_staff':False,
+        'first_name':'Programmatic',
+        'last_name':'',
+        'email':'',
+    })
+except:
+    pass
 
 class ModelEventMixin(object):
     @cachedclassproperty
@@ -53,6 +71,7 @@ class ModelEvent(object):
       payload := row_to_json(tmp)::text FROM ({payload}) tmp;
     
       PERFORM pg_notify({eventcolumn}, payload);
+
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql;
@@ -137,16 +156,32 @@ class ModelEvent(object):
             cursor.execute("DROP TRIGGER IF EXISTS {tablename}_{name}_trig ON {tablename} ".format(tablename=self.table_name,name=self.name))
             cursor.execute("DROP FUNCTION IF EXISTS {tablename}_{name}_func".format(tablename=self.table_name,name=self.name))
 
-class Publisher(models.Model):
+class AuditModel(models.Model):
+    creator = models.ForeignKey(User,null=False,on_delete=models.PROTECT,editable=False,related_name='+')
+    created = models.DateTimeField(auto_now_add=timezone.now)
+    modifier = models.ForeignKey(User,null=False,on_delete=models.PROTECT,editable=False,related_name='+')
+    modified = models.DateTimeField(auto_now=timezone.now)
+
+    class Meta(object):
+        abstract = True
+
+class ActiveModel(AuditModel):
+    active = models.BooleanField(editable=False,default=True)
+    active_modifier = models.ForeignKey(User,null=False,on_delete=models.PROTECT,editable=False,related_name='+')
+    active_modified = models.DateTimeField(null=True,editable=False)
+
+    class Meta(object):
+        abstract = True
+
+class Publisher(ActiveModel):
     name = models.CharField(max_length=32,null=False,primary_key=True)
     category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
-    active = models.BooleanField(editable=False,default=True)
     comments = models.TextField(null=True)
-    register_time = models.DateTimeField(auto_now_add=timezone.now)
+
 
     @property
     def is_system_publisher(self):
-        return self.name == 'EventHubConsole'
+        return self.category == SYSTEM
 
     @property
     def is_editable(self):
@@ -161,20 +196,23 @@ class Publisher(models.Model):
 try:
     Publisher.EVENTHUB_CONSOLE = Publisher.objects.get_or_create(name="EventHubConsole",defaults={
         'comments':"Used by event hub console to manage publishers and subscribers",
-        'category':SYSTEM
+        'category':SYSTEM,
+        'active':True,
+        'active_modifier':User.PROGRAMMATIC,
+        'active_modified':timezone.now(),
+        'creator':User.PROGRAMMATIC,
+        'modifier':User.PROGRAMMATIC
     })[0]
 except:
+    traceback.print_exc()
     pass
 
-class EventType(models.Model):
+class EventType(ActiveModel):
     name = models.CharField(max_length=32,null=False,primary_key=True)
     publisher = models.ForeignKey(Publisher,null=False,related_name="event_types",on_delete=models.PROTECT)
     category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
-    active = models.BooleanField(default=True)
     comments = models.TextField(null=True,blank=True)
     sample = JSONField(null=True,blank=True)
-    register_time = models.DateTimeField(auto_now_add=timezone.now)
-    managed = models.BooleanField(default=True,editable=False)
 
     @property
     def is_system_event_type(self):
@@ -207,8 +245,8 @@ class Event(ModelEventMixin,models.Model):
                 actions=[ModelEvent.INSERT],
                 name="event",
                 event_column="NEW.publisher_id || '.' || NEW.event_type_id",
-                payload="SELECT NEW.id,NEW.publisher_id,NEW.event_type_id",
-                condition="EXISTS(SELECT 1 FROM publisher a join event_type b on a.name = b.publisher_id where a.active and b.active and b.name = NEW.event_type_id)"
+                payload="SELECT NEW.id,NEW.publisher_id,NEW.event_type_id"
+                #condition="EXISTS(SELECT 1 FROM publisher a join event_type b on a.name = b.publisher_id where a.active and b.active and b.name = NEW.event_type_id)"
             )
         ]
 
@@ -222,11 +260,32 @@ class Event(ModelEventMixin,models.Model):
             ('publisher','event_type')
         ]
 
-class Subscriber(models.Model):
-    name = models.CharField(max_length=32,null=False,primary_key=True)
-    active = models.BooleanField(editable=False,default=True)
+class EventProcessingModule(ActiveModel):
+    name = models.CharField(max_length=64,null=False,unique=True)
+    code = models.TextField(null=True)
+    parameters = models.TextField(null=True,blank=True)
     comments = models.TextField(null=True,blank=True)
-    register_time = models.DateTimeField(auto_now_add=timezone.now)
+
+
+    def __str__(self):
+        return self.name
+
+    class Meta(object):
+        db_table = "event_processing_module"
+
+
+class Subscriber(ActiveModel):
+    name = models.CharField(max_length=32,null=False,primary_key=True)
+    category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
+    comments = models.TextField(null=True,blank=True)
+
+    @property
+    def is_system_event_type(self):
+        return self.category == SYSTEM
+
+    @property
+    def is_editable(self):
+        return self.category in (MANAGED,TESTING)
 
     def __str__(self):
         return self.name
@@ -234,15 +293,26 @@ class Subscriber(models.Model):
     class Meta(object):
         db_table = "subscriber"
 
-class SubscribedEventType(models.Model):
+class SubscribedEventType(ActiveModel):
     subscriber = models.ForeignKey(Subscriber,null=False,related_name="event_types",on_delete=models.PROTECT)
     publisher = models.ForeignKey(Publisher,null=False,related_name="subscribed_publisher_event_types",on_delete=models.PROTECT)
-    event_type = models.ForeignKey(EventType,null=False,related_name="subscribed_event_types",on_delete=models.PROTECT)
-    managed = models.BooleanField(default=True,editable=False)
-    active = models.BooleanField(null=False,default=True,editable=False)
+    event_type = ChainedForeignKey(EventType,
+        chained_field="publisher", chained_model_field="publisher",
+        show_all=False, auto_choose=True,  null=False,on_delete=models.PROTECT)
+
+    category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
+    event_processing_module = models.ForeignKey(EventProcessingModule,null=True,on_delete=models.PROTECT,blank=True)
+    parameters = JSONField(null=True,blank=True)
     last_dispatched_event = models.ForeignKey(Event,null=True,on_delete=models.PROTECT,editable=False)
     last_dispatched_time = models.DateTimeField(null=True,editable=False)
-    register_time = models.DateTimeField(auto_now_add=timezone.now)
+
+    @property
+    def is_system_event_type(self):
+        return self.category == SYSTEM
+
+    @property
+    def is_editable(self):
+        return self.category in (MANAGED,TESTING)
 
     def __str__(self):
         return "{} subscribes {}".format(self.subscriber,self.event_type)
@@ -290,6 +360,60 @@ class EventProcessingHistory(models.Model):
     class Meta(object):
         db_table = "event_processing_history"
 
+class AuditModelListener(object):
+    def set_user_and_time(sender,instance,update_fields=None,**kwargs):
+        try:
+            original_instance = instance.__class__.objects.get(pk = instance.pk)
+        except models.ObjectDoesNotExist:
+            original_instance = None
+
+        AuditModelListener._set_user_and_time(instance)
+
+
+    def _set_user_and_time(instance,update_fields,original_instance=None):
+        if original_instance is None:
+            #create
+            instance.creator = loginuser.get()
+            instance.modifier = loginuser.get()
+        else:
+            instance.modifier = loginuser.get()
+            if update_fields is not None:
+                if "modifier" not in update_fields:
+                    update_fields.append("modifier")
+                if "modified" not in update_fields:
+                    update_fields.append("modified")
+
+class ActiveModelListener(object):
+    @staticmethod
+    @receiver(pre_save, sender=Publisher)
+    @receiver(pre_save, sender=EventType)
+    @receiver(pre_save, sender=EventProcessingModule)
+    @receiver(pre_save, sender=Subscriber)
+    @receiver(pre_save, sender=SubscribedEventType)
+    def set_user_and_time(sender,instance,update_fields=None,**kwargs):
+        try:
+            original_instance = instance.__class__.objects.get(pk = instance.pk)
+        except models.ObjectDoesNotExist:
+            original_instance = None
+
+        ActiveModelListener._set_user_and_time(instance,update_fields,original_instance)
+
+    def _set_user_and_time(instance,update_fields,original_instance=None):
+        AuditModelListener._set_user_and_time(instance,update_fields,original_instance)
+        if original_instance is None:
+            #create
+            instance.active_modifier = loginuser.get()
+            instance.active_modified = timezone.now()
+        else:
+            if original_instance.active != instance.active:
+                instance.active_modifier = loginuser.get()
+                instance.active_modified = timezone.now()
+                if update_fields is not None:
+                    if "active_modifier" not in update_fields:
+                        update_fields.append("active_modifier")
+                    if "active_modified" not in update_fields:
+                        update_fields.append("active_modified")
+
 
 class PublisherListener(object):
     @staticmethod
@@ -302,8 +426,12 @@ class PublisherListener(object):
         EventType(
             name="pub_{}".format(instance.name),
             publisher=Publisher.EVENTHUB_CONSOLE,
-            managed=False,
+            category=SYSTEM,
             active=True,
+            active_modifier=User.PROGRAMMATIC,
+            active_modified=timezone.now(),
+            modifier=User.PROGRAMMATIC,
+            creator=User.PROGRAMMATIC,
             comments="Used by event hub console to manage publisher '{}'".format(instance.name),
             sample={
                 "command":"active"
@@ -319,8 +447,12 @@ class SubscriberListener(object):
         EventType(
             name="sub_{}".format(instance.name),
             publisher=Publisher.EVENTHUB_CONSOLE,
-            managed=False,
+            category=SYSTEM,
             active=True,
+            active_modifier=User.PROGRAMMATIC,
+            active_modified=timezone.now(),
+            modifier=User.PROGRAMMATIC,
+            creator=User.PROGRAMMATIC,
             comments="Used by event hub console to manage subscriber '{}'".format(instance.name),
             sample={
                 "command":"active"
@@ -332,3 +464,4 @@ reversion.register(Publisher)
 reversion.register(EventType)
 reversion.register(Subscriber)
 reversion.register(SubscribedEventType)
+reversion.register(EventProcessingModule)

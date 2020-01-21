@@ -2,14 +2,14 @@ from django.contrib.admin import register, ModelAdmin, StackedInline, SimpleList
 from django.urls import path,reverse
 from django.http import HttpResponseRedirect
 
+from . import models
+from . import forms
 
-from .models import (Publisher,EventType,Event,Subscriber,SubscribedEventType,SubscribedEvent,EventProcessingHistory)
-from .forms import (PublisherEditForm,EventTypeEditForm,SubscriberEditForm,SubscribedEventTypeEditForm)
 
 class EventTypeInline(TabularInline):
-    model = EventType
-    form = EventTypeEditForm
-    readonly_fields=("register_time",)
+    model = models.EventType
+    form = forms.EventTypeEditForm
+    readonly_fields=("created",)
     can_delete = False
     extra = 1
 
@@ -28,13 +28,13 @@ class EventTypeInline(TabularInline):
     def has_delete_permission(self, request, obj=None):
         return False
 
-@register(Publisher)
+@register(models.Publisher)
 class PublisherAdmin(ModelAdmin):
-    list_display = ('name', 'active','register_time')
+    list_display = ('name','category', 'active','created')
     ordering = ('name',)
     readonly_fields=("active",)
 
-    form = PublisherEditForm
+    form = forms.PublisherEditForm
     inlines = (EventTypeInline,)
 
     def has_change_permission(self, request, obj=None):
@@ -47,7 +47,7 @@ class PublisherAdmin(ModelAdmin):
         return False
 
 
-@register(Event)
+@register(models.Event)
 class EventAdmin(ModelAdmin):
     list_display = ('publisher','event_type','source','payload','publish_time')
 
@@ -66,7 +66,7 @@ class EventAdmin(ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
         
-        extra_context['event_dispatch_enabled'] = Event.events[0].enabled
+        extra_context['event_dispatch_enabled'] = models.Event.events[0].enabled
         return super(EventAdmin, self).changelist_view(request, extra_context=extra_context)
 
     def get_urls(self):
@@ -79,43 +79,89 @@ class EventAdmin(ModelAdmin):
         return my_urls + urls
 
     def enable_dispatch_event(self,request):
-        Event.events[0].enable()
+        models.Event.events[0].enable()
         url = reverse('admin:console_event_changelist')
         return HttpResponseRedirect(url)
 
     def disable_dispatch_event(self,request):
-        Event.events[0].disable()
+        models.Event.events[0].disable()
         url = reverse('admin:console_event_changelist')
         return HttpResponseRedirect(url)
     
 
 
 class SubscribedEventTypeInline(TabularInline):
-    model = SubscribedEventType
-    form = SubscribedEventTypeEditForm
-    readonly_fields=("managed","active","last_dispatched_event","last_dispatched_time","register_time")
+    model = models.SubscribedEventType
+    readonly_fields=("active","last_dispatched_event","last_dispatched_time","created")
     can_delete = False
     extra = 1
 
+    form = forms.SubscribedEventTypeEditForm
 
-@register(Subscriber)
-class SubscriberAdmin(ModelAdmin):
-    list_display = ('name', 'active','register_time')
+    def has_change_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_add_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+@register(models.EventProcessingModule)
+class EventProcessingModuleAdmin(ModelAdmin):
+    list_display = ('name', 'active','created')
     ordering = ('name',)
     readonly_fields=("active",)
 
-    form = SubscriberEditForm
+    def has_change_permission(self, request, obj=None):
+        return True
+
+    def has_delete_permission(self, request, obj=None):
+        return True
+
+    def has_add_permission(self, request, obj=None):
+        return True
+
+
+@register(models.Subscriber)
+class SubscriberAdmin(ModelAdmin):
+    list_display = ('name','category', 'active','created')
+    ordering = ('name',)
+    readonly_fields=("active",)
+
+    form = forms.SubscriberEditForm
 
     inlines = (SubscribedEventTypeInline,)
 
+    def has_change_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        if obj:
+            if obj.is_editable:
+                return True
+        return False
+
+    def has_add_permission(self, request, obj=None):
+        return True
+
 class EventProcessingHistoryInline(TabularInline):
-    model = EventProcessingHistory
+    model = models.EventProcessingHistory
     readonly_fields = ('process_host','process_pid','status','process_start_time','process_end_time','result')
     can_delete = False
     can_add = False
 
 
-@register(SubscribedEvent)
+@register(models.SubscribedEvent)
 class SubscribedEventAdmin(ModelAdmin):
     list_display = ('subscriber', 'publisher','event_type','event','status','process_start_time')
     readonly_fields = ('subscriber', 'publisher','event_type','event','status','process_start_time','process_end_time','result','process_host','process_pid','process_times')

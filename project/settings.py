@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     'reversion',
+    'smart_selects',
 
     'console'
 ]
@@ -57,6 +58,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'reversion.middleware.RevisionMiddleware',
     'dbca_utils.middleware.SSOLoginMiddleware',
+    'project.loginuser.Middleware'
 ]
 
 ROOT_URLCONF = 'project.urls'
@@ -127,3 +129,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/2.2/howto/static-files/
 
 STATIC_URL = '/static/'
+
+#used by smart select
+USE_DJANGO_JQUERY = False
+JQUERY_URL = None
