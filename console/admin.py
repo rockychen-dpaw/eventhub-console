@@ -156,15 +156,30 @@ class SubscriberAdmin(ModelAdmin):
 
 class EventProcessingHistoryInline(TabularInline):
     model = models.EventProcessingHistory
-    readonly_fields = ('process_host','process_pid','status','process_start_time','process_end_time','result')
+    readonly_fields = ('process_host','process_pid','_status','process_start_time','process_end_time','result')
     can_delete = False
     can_add = False
+    extra=0
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def _status(self,obj):
+        return obj.get_status_display() if obj else ""
+    _status.short_description = 'Processing Status'
 
 
 @register(models.SubscribedEvent)
 class SubscribedEventAdmin(ModelAdmin):
-    list_display = ('subscriber', 'publisher','event_type','event','status','process_start_time')
+    list_display = ('subscriber', 'publisher','event_type','event','_status','process_start_time')
     readonly_fields = ('subscriber', 'publisher','event_type','event','status','process_start_time','process_end_time','result','process_host','process_pid','process_times')
+    list_filter = ('subscriber','publisher','event_type')
 
     inlines = (EventProcessingHistoryInline,)
 
@@ -176,4 +191,8 @@ class SubscribedEventAdmin(ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    def _status(self,obj):
+        return obj.get_status_display() if obj else ""
+    _status.short_description = 'Processing Status'
 

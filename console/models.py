@@ -303,8 +303,11 @@ class SubscribedEventType(ActiveModel):
     category = models.SmallIntegerField(default=MANAGED,choices=CATEGORY_CHOICES)
     event_processing_module = models.ForeignKey(EventProcessingModule,null=True,on_delete=models.PROTECT,blank=True)
     parameters = JSONField(null=True,blank=True)
+    replay_missed_events = models.BooleanField(editable=True,default=True)
+    replay_failed_events = models.BooleanField(editable=True,default=True)
     last_dispatched_event = models.ForeignKey(Event,null=True,on_delete=models.PROTECT,editable=False)
     last_dispatched_time = models.DateTimeField(null=True,editable=False)
+    last_listening_time = models.DateTimeField(null=True,editable=False)
 
     @property
     def is_system_event_type(self):
@@ -326,6 +329,12 @@ class SubscribedEvent(models.Model):
     SUCCEED = 1
     FAILED = -1
     TIMEOUT = -2
+    STATUS_CHOICES = (
+        (PROCESSING,"Processing"),
+        (SUCCEED,"Succeed"),
+        (FAILED,"Failed"),
+        (TIMEOUT,"Timeout"),
+    )
 
     subscriber = models.ForeignKey(Subscriber,null=False,editable=False,related_name="events",on_delete=models.PROTECT)
     publisher = models.ForeignKey(Publisher,null=False,editable=False,related_name="subscribed_publisher_events",on_delete=models.PROTECT)
@@ -336,7 +345,7 @@ class SubscribedEvent(models.Model):
     process_times = models.IntegerField(default=1,editable=False)
     process_start_time = models.DateTimeField(auto_now_add=timezone.now)
     process_end_time = models.DateTimeField(null=True,editable=False)
-    status = models.IntegerField(default=PROCESSING,editable=False)
+    status = models.IntegerField(default=PROCESSING,choices=STATUS_CHOICES,editable=False)
     result = models.TextField(null=True,editable=False)
 
     class Meta(object):
@@ -354,7 +363,7 @@ class EventProcessingHistory(models.Model):
     process_pid = models.CharField(max_length=32,null=True,editable=False)
     process_start_time = models.DateTimeField(null=False,editable=False)
     process_end_time = models.DateTimeField(null=True,editable=False)
-    status = models.IntegerField(null=False,editable=False)
+    status = models.IntegerField(null=False,choices=SubscribedEvent.STATUS_CHOICES,editable=False)
     result = models.TextField(null=True,editable=False)
 
     class Meta(object):
